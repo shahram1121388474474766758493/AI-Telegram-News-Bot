@@ -1,0 +1,121 @@
+# ==========================================================
+# AI-Telegram-News-Bot — Project Manifest & Tooling Config
+# ----------------------------------------------------------
+# Single source of truth for packaging metadata and the
+# quality-gate tools (ruff, black, mypy, pytest). Established
+# in Phase 0 so every later phase is written under consistent
+# standards and CI-verified from day one.
+# ==========================================================
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-telegram-news-bot"
+version = "0.1.0"
+description = "A professional, fully AI-powered Telegram gaming-news bot: monitor, dedupe, score, rewrite, illustrate, and auto-publish 24/7."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "AI-Telegram-News-Bot maintainers" }]
+keywords = ["telegram", "bot", "news", "ai", "gaming", "automation"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Communications :: Chat",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content :: News/Diary",
+]
+
+# Runtime dependencies are intentionally minimal in Phase 0 (stub only).
+# Each subsequent phase adds exactly the dependencies it needs, keeping
+# `requirements.txt` and this list in lockstep.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "black>=24.0",
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+newsbot = "newsbot.main:main"
+
+[project.urls]
+Homepage = "https://github.com/shahram1121388474474766758493/AI-Telegram-News-Bot"
+Repository = "https://github.com/shahram1121388474474766758493/AI-Telegram-News-Bot"
+
+# ----------------------------------------------------------
+# Packaging: src/ layout
+# ----------------------------------------------------------
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ----------------------------------------------------------
+# Ruff — linting (fast, comprehensive)
+# ----------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import ordering)
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",  # line length handled by black
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["newsbot"]
+
+# ----------------------------------------------------------
+# Black — formatting
+# ----------------------------------------------------------
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312"]
+
+# ----------------------------------------------------------
+# Mypy — static typing (strict, scoped to src/)
+# ----------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+show_error_codes = true
+pretty = true
+
+# ----------------------------------------------------------
+# Pytest — testing
+# ----------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = "-ra -q"
+filterwarnings = ["error"]
