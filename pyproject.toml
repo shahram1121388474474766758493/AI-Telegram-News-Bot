@@ -29,10 +29,15 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content :: News/Diary",
 ]
 
-# Runtime dependencies are intentionally minimal in Phase 0 (stub only).
-# Each subsequent phase adds exactly the dependencies it needs, keeping
-# `requirements.txt` and this list in lockstep.
-dependencies = []
+# Runtime dependencies grow per phase, kept in lockstep with
+# `requirements.txt`. Each entry is annotated with the phase that introduced
+# it so the dependency surface stays auditable.
+dependencies = [
+    # Phase 1 — Configuration & Secrets
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
+]
 
 [project.optional-dependencies]
 dev = [
