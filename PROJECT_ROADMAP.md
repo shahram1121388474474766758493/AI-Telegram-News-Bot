@@ -611,3 +611,276 @@ src/newsbot/processing/dedup.py
 - Not handling updated/republished articles (same story, new info).
 
 **Future improvements:** Vector DB (pgvector/Qdrant); clustering of stories; "update this post" instead of new post.
+
+---
+
+### Phase 6 — AI Importance Analyzer
+
+**Goal:** Automatically decide whether a story is important/breaking enough to publish.
+
+**Description:** A provider-agnostic LLM client scores each candidate article (0.0–1.0) and flags `is_breaking`, returning structured JSON with a short reason. A threshold (`importance_threshold`) gates the pipeline. Breaking news can bypass certain gates and be prioritized in the queue. All calls are cached and retried.
+
+**Tasks:**
+1. `ai/client.py` — provider-agnostic LLM client (`complete_json(prompt, schema)`), configurable base URL/model/key.
+2. `ai/cache.py` — cache keyed by `content_hash + prompt_version` (avoid paying twice).
+3. `processing/importance.py` — build prompt from `config/prompts/importance.txt`, call LLM, parse+validate JSON (`{score, is_breaking, reason, topics[]}`).
+4. Apply threshold; write `decisions` (`importance_score`, `is_breaking`, `reason`, `model`, `prompt_version`).
+5. Guardrails: schema validation, output clamping, fallback score on failure.
+
+**Files:** `ai/client.py`, `ai/cache.py`, `processing/importance.py`, `config/prompts/importance.txt`
+
+**Folder structure (added):**
+```
+src/newsbot/ai/{client.py,cache.py}
+src/newsbot/processing/importance.py
+config/prompts/importance.txt
+```
+
+**Required libraries:** `httpx`/`openai` SDK, `pydantic`, `tenacity`.
+
+**Database changes:** Writes `decisions`; updates `articles.status` to `scored`/`rejected`. No schema change.
+
+**APIs:** LLM completion/chat endpoint (OpenAI-compatible).
+
+**Testing:**
+- Mock LLM returns fixed JSON → deterministic decisions.
+- Malformed JSON → fallback path, no crash.
+- Threshold gating tested at boundaries.
+
+**Completion checklist:**
+- [ ] Structured, validated score returned per article.
+- [ ] Cache prevents duplicate LLM calls.
+- [ ] Breaking flag propagates to queue priority.
+
+**Common mistakes:**
+- Trusting free-text LLM output — always request+validate JSON schema.
+- No cost cap → runaway spend; add per-run limits + caching.
+- Prompt drift — version prompts (`prompt_version`).
+
+**Future improvements:** Fine-tuned classifier; topic taxonomy; per-source trust weighting; A/B prompt testing.
+
+---
+
+### Phase 7 — AI Rewriter (Telegram Style)
+
+**Goal:** Produce a clean, consistent, channel-ready Telegram post from the source article.
+
+**Description:** Using a versioned prompt, the LLM rewrites accepted articles into a Telegram style: a punchy title/hook, 2–4 tight paragraphs or bullets, relevant emoji, hashtags, and a source attribution link. Output respects Telegram limits (caption ≤ 1024 chars with image; message ≤ 4096) and uses safe HTML/MarkdownV2.
+
+**Tasks:**
+1. `processing/rewriter.py` — build prompt from `config/prompts/rewrite.txt`; call LLM; return structured `{title, body, hashtags[], emoji}`.
+2. `publishing/formatter.py` — assemble final message honoring Telegram length + entity-escaping rules.
+3. Enforce style guide: no clickbait beyond source facts, always attribute source, consistent tone.
+4. Persist result as `posts.text` (status `queued` set in Phase 10).
+
+**Files:** `processing/rewriter.py`, `publishing/formatter.py`, `config/prompts/rewrite.txt`
+
+**Folder structure (added):**
+```
+src/newsbot/processing/rewriter.py
+src/newsbot/publishing/formatter.py
+config/prompts/rewrite.txt
+```
+
+**Required libraries:** LLM client (Phase 6), `pydantic`. (Telegram escaping helpers in formatter.)
+
+**Database changes:** Writes `posts` row (text). Updates `articles.status` to `rewritten`.
+
+**APIs:** LLM chat/completion endpoint.
+
+**Testing:**
+- Golden prompt/response → expected formatted message.
+- Length-limit enforcement (caption vs message).
+- MarkdownV2/HTML escaping correctness (no broken entities).
+
+**Completion checklist:**
+- [ ] Output always within Telegram limits.
+- [ ] Source attribution present.
+- [ ] Escaping never breaks rendering.
+
+**Common mistakes:**
+- Unescaped MarkdownV2 special chars → send failures.
+- Exceeding caption length when image attached.
+- Hallucinated facts — instruct model to stay within source; keep the link.
+
+**Future improvements:** Multi-language output; tone presets per channel; auto-summary length by importance.
+
+---
+
+### Phase 8 — Image Selection & Generation
+
+**Goal:** Every post has a suitable image — either the source's, a licensed search result, or an AI-generated one.
+
+**Description:** Resolution order: (1) use the article's own lead image if usable/allowed; (2) otherwise search a license-safe image provider; (3) otherwise generate an original image from the headline via an image API. Images are downloaded, validated (size/format/aspect), optionally watermarked, and cached.
+
+**Tasks:**
+1. `ai/image_client.py` — provider-agnostic image generation/search client.
+2. `processing/images.py` — `resolve_image(article)` implementing the fallback chain.
+3. Validate + normalize (resize/crop to Telegram-friendly ratio, ≤ provider limits), store in `media/`.
+4. Record `posts.image_path`.
+
+**Files:** `ai/image_client.py`, `processing/images.py`
+
+**Folder structure (added):**
+```
+src/newsbot/ai/image_client.py
+src/newsbot/processing/images.py
+media/                      # runtime, git-ignored
+```
+
+**Required libraries:** `httpx`, `Pillow` (validate/resize), image-provider SDK/API.
+
+**Database changes:** Updates `posts.image_path`. No schema change.
+
+**APIs:** Image generation API; optional license-safe image search API.
+
+**Testing:**
+- Article with valid `og:image` → reuse path.
+- No image → generation path (mocked) produces a file.
+- Invalid/oversized image → rejected/regenerated.
+
+**Completion checklist:**
+- [ ] Fallback chain works end-to-end.
+- [ ] Images validated + resized.
+- [ ] Licensing respected (no unlicensed stock).
+
+**Common mistakes:**
+- Hotlinking images that expire/403 later — download and store.
+- Ignoring licensing (legal risk) — prefer generation when unsure.
+- Sending images that violate Telegram size/format constraints.
+
+**Future improvements:** Brand overlay/watermark templates; per-topic art styles; alt-text for accessibility.
+
+---
+
+### Phase 9 — Telegram Publisher
+
+**Goal:** Reliably deliver finished posts (text + image) to the Telegram channel.
+
+**Description:** An `aiogram`-based publisher sends `sendPhoto` (with caption) or `sendMessage`, handles Telegram API errors (flood-wait, entity errors), records `telegram_message_id`, and logs every attempt in `post_log`. Publishing is idempotent (a post is never sent twice).
+
+**Tasks:**
+1. `publishing/telegram.py` — `publish(post)` → send photo+caption or message; capture `message_id`.
+2. Handle `RetryAfter` (flood control) via `tenacity`/sleep; classify permanent vs transient errors.
+3. Idempotency guard: skip if `post.status == published` / `telegram_message_id` set.
+4. Write `post_log` (attempt, result, error); set `posts.status` and `published_at`.
+
+**Files:** `publishing/telegram.py`
+
+**Folder structure (added):**
+```
+src/newsbot/publishing/telegram.py
+```
+
+**Required libraries:** `aiogram>=3`, `tenacity`.
+
+**Database changes:** Updates `posts` (`status`, `published_at`, `telegram_message_id`); writes `post_log`.
+
+**APIs:** Telegram Bot API (`sendPhoto`, `sendMessage`).
+
+**Testing:**
+- Mock Bot API → assert correct method/params.
+- Flood-wait simulated → respects retry-after.
+- Idempotency: second publish call is a no-op.
+
+**Completion checklist:**
+- [ ] Post appears in a test channel.
+- [ ] `message_id` stored.
+- [ ] No double-posting under retries.
+
+**Common mistakes:**
+- Ignoring flood-wait → bot temporarily banned.
+- Not handling caption entity errors from bad escaping.
+- Losing idempotency on retry → duplicate posts.
+
+**Future improvements:** Multiple channels; pinned/breaking formatting; edit/delete published posts on correction.
+
+---
+
+### Phase 10 — Scheduling, Rate-Limiting & Post Queue
+
+**Goal:** Enforce a minimum gap between posts (default 20 min) and drive publishing on time.
+
+**Description:** Accepted posts are enqueued with a computed `scheduled_at` respecting the min-gap from the last post. A publisher worker wakes on schedule, selects the next publishable post, publishes it, and updates `kv_state.last_post_at`. Breaking news can be prioritized while still respecting an absolute minimum spacing.
+
+**Tasks:**
+1. `publishing/queue.py` — `enqueue(post)` computing `scheduled_at = max(now, last_post_at + gap)`; priority for breaking.
+2. `scheduler/jobs.py` — APScheduler jobs: `poll_sources` (every N min) and `drain_queue` (frequent tick).
+3. `drain_queue` selects `next_publishable_post` where `scheduled_at <= now` and `status=queued`, then calls Publisher.
+4. Update `kv_state.last_post_at` atomically after each publish.
+
+**Files:** `publishing/queue.py`, `scheduler/jobs.py`
+
+**Folder structure (added):**
+```
+src/newsbot/publishing/queue.py
+src/newsbot/scheduler/jobs.py
+```
+
+**Required libraries:** `APScheduler`, `SQLAlchemy` (locking/`SELECT ... FOR UPDATE` on Postgres).
+
+**Database changes:** Uses `posts` (`scheduled_at`, `status`) and `kv_state` (`last_post_at`). No schema change.
+
+**APIs:** None (internal scheduling).
+
+**Testing:**
+- Two posts enqueued back-to-back → second scheduled ≥ gap later.
+- Breaking prioritized but still ≥ absolute-min spacing.
+- Concurrency: two workers don't publish the same post (locking).
+
+**Completion checklist:**
+- [ ] Min-gap strictly enforced.
+- [ ] Queue drains in order/priority.
+- [ ] No race-condition double publish.
+
+**Common mistakes:**
+- Computing gap in-memory only → resets on restart; persist `last_post_at`.
+- No row-locking → two workers grab the same post.
+- Timezone bugs — store everything in UTC.
+
+**Future improvements:** Per-hour posting caps; quiet hours; dynamic gap by importance; distributed queue (Redis/RQ/Celery).
+
+---
+
+### Phase 11 — Orchestration Pipeline & Workers
+
+**Goal:** Wire all stages into a single, resilient end-to-end pipeline and runnable processes.
+
+**Description:** `pipeline/orchestrator.py` composes Fetch → Extract → Dedup → Importance → Rewrite → Image → Enqueue for each source poll. `main.py` launches the required processes (pipeline worker, publisher/scheduler, admin bot) and wires graceful shutdown. `scripts/run_once.py` runs one full pass for debugging.
+
+**Tasks:**
+1. `pipeline/orchestrator.py` — `run_pipeline_pass()` iterating sources and moving articles through each stage with per-item error isolation.
+2. `main.py` — CLI entry (`pipeline`, `publisher`, `admin`, `all`) + signal handling (SIGTERM/SIGINT) for graceful shutdown.
+3. Per-item try/except → failures quarantine one article without killing the batch.
+4. `scripts/run_once.py` for a single deterministic pass.
+
+**Files:** `pipeline/orchestrator.py`, `src/newsbot/main.py` (finalized), `scripts/run_once.py`
+
+**Folder structure (added):**
+```
+src/newsbot/pipeline/orchestrator.py
+scripts/run_once.py
+```
+
+**Required libraries:** `asyncio`, `APScheduler`, all prior modules.
+
+**Database changes:** None new (uses all tables).
+
+**APIs:** None new.
+
+**Testing:**
+- Integration test: seeded mock source → article flows to a `queued` post.
+- One failing stage on one item doesn't abort the batch.
+- Graceful shutdown finishes in-flight work.
+
+**Completion checklist:**
+- [ ] `run_once` yields a queued post from a mock source.
+- [ ] Processes start/stop cleanly.
+- [ ] Errors isolated per item.
+
+**Common mistakes:**
+- One bad article crashing the whole run — isolate per item.
+- Blocking calls inside async loop — keep I/O async.
+- No graceful shutdown → lost in-flight posts.
+
+**Future improvements:** Task queue backend; parallel per-source workers; backpressure controls.
