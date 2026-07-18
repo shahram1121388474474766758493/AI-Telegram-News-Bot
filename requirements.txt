@@ -29,3 +29,11 @@
 pydantic>=2.7
 pydantic-settings>=2.3
 python-dotenv>=1.0
+
+# ---- Phase 2 — Database Layer & Migrations ----
+SQLAlchemy>=2.0
+alembic>=1.13
+PyYAML>=6.0
+# PostgreSQL driver is production-only (opt-in via the "prod" extra):
+#   pip install -e ".[prod]"     # installs psycopg[binary]
+# SQLite (dev/test) needs no extra driver — it ships with CPython.
