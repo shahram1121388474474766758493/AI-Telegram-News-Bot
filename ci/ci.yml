@@ -1,0 +1,75 @@
+# ==========================================================
+# AI-Telegram-News-Bot — Continuous Integration
+# ----------------------------------------------------------
+# Runs the same quality gates as `make check` on every push
+# and pull request, across supported Python versions. This
+# keeps `main` green from the very first phase. Phase 14
+# extends this with coverage gating.
+#
+# ACTIVATION
+# ----------
+# This file lives in `ci/` because the automation account that
+# scaffolds the repo cannot push into `.github/workflows/`
+# (missing the GitHub `workflows` permission). To enable CI,
+# copy it into place from a machine/token that has that
+# permission:
+#
+#     mkdir -p .github/workflows
+#     cp ci/ci.yml .github/workflows/ci.yml
+#     git add .github/workflows/ci.yml && git commit -m "ci: enable GitHub Actions" && git push
+#
+# Once present under `.github/workflows/`, GitHub runs it
+# automatically on every push and pull request to `main`.
+# ==========================================================
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint · Type-check · Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project + dev tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: python -m ruff check src tests
+
+      - name: Format check (black)
+        run: python -m black --check src tests
+
+      - name: Type-check (mypy, strict)
+        run: python -m mypy
+
+      - name: Test (pytest)
+        run: python -m pytest
