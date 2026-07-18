@@ -1,0 +1,28 @@
+# ==========================================================
+# AI-Telegram-News-Bot — Runtime Requirements
+# ----------------------------------------------------------
+# The canonical dependency source is `pyproject.toml`. This
+# file mirrors the *runtime* dependencies for environments
+# and tooling that expect a plain requirements file
+# (e.g. `pip install -r requirements.txt`, Docker layers).
+#
+# Phase 0 ships a stub package with NO runtime dependencies.
+# Each subsequent phase appends exactly the libraries it needs
+# (kept in lockstep with pyproject.toml [project.dependencies]):
+#
+#   Phase 1  Config      : pydantic, pydantic-settings, python-dotenv
+#   Phase 2  Database    : SQLAlchemy>=2, alembic, PyYAML, aiosqlite, psycopg[binary]
+#   Phase 3  Fetcher     : httpx, feedparser, tenacity
+#   Phase 4  Extraction  : trafilatura, beautifulsoup4, selectolax, langdetect, w3lib
+#   Phase 5  Dedup       : rapidfuzz
+#   Phase 6  Importance  : (uses httpx from Phase 3)
+#   Phase 8  Images      : Pillow
+#   Phase 9  Publisher   : aiogram>=3
+#   Phase 10 Scheduling  : APScheduler
+#   Phase 13 Logging     : structlog
+#
+# For development tooling (ruff/black/mypy/pytest) install the
+# dev extras instead:  pip install -e ".[dev]"
+# ==========================================================
+
+# (no runtime dependencies yet — Phase 0 stub)
