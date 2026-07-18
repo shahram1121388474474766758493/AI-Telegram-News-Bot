@@ -8,7 +8,7 @@ poll-due source selection, and the boolean KV flag helpers.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.orm import Session
@@ -27,6 +27,46 @@ from newsbot.db.repositories import (
 def _make_source(session: Session, *, url: str = "https://ign.com/rss", name: str = "IGN") -> int:
     src = SourceRepository(session).add(name=name, url=url, type=SourceType.RSS)
     return src.id
+
+
+# --------------------------------------------------------------------------- #
+# UtcDateTime column type                                                     #
+# --------------------------------------------------------------------------- #
+def test_utcdatetime_normalizes_naive_input_to_utc(db_session: Session) -> None:
+    """A naive datetime written to a timestamp column reads back as aware UTC."""
+    source_id = _make_source(db_session)
+    art, _ = ArticleRepository(db_session).get_or_create(
+        source_id=source_id, url="u", url_hash="h", title="t"
+    )
+    repo = PostRepository(db_session)
+    post = repo.enqueue(article_id=art.id, text="x")
+    naive = datetime(2025, 6, 1, 12, 0, 0)  # intentionally naive
+    repo.mark_published(post.id, when=naive)
+    # Force a reload from the DB so the value passes through UtcDateTime's
+    # result processing (rather than reading back the in-memory assignment).
+    db_session.expire_all()
+    stored = repo.get_by_id(post.id)
+    assert stored is not None
+    assert stored.published_at is not None
+    assert stored.published_at.tzinfo is not None
+    assert stored.published_at == naive.replace(tzinfo=UTC)
+
+
+def test_utcdatetime_converts_aware_input_to_utc(db_session: Session) -> None:
+    """A non-UTC aware datetime is converted to the equivalent UTC instant."""
+    source_id = _make_source(db_session)
+    art, _ = ArticleRepository(db_session).get_or_create(
+        source_id=source_id, url="u", url_hash="h", title="t"
+    )
+    repo = PostRepository(db_session)
+    post = repo.enqueue(article_id=art.id, text="x")
+    plus_two = timezone(timedelta(hours=2))
+    aware = datetime(2025, 6, 1, 14, 0, 0, tzinfo=plus_two)  # == 12:00 UTC
+    repo.mark_published(post.id, when=aware)
+    db_session.expire_all()
+    stored = repo.get_by_id(post.id)
+    assert stored is not None
+    assert stored.published_at == datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
 
 
 # --------------------------------------------------------------------------- #
@@ -195,10 +235,10 @@ def test_latest_published_at_tracks_most_recent(db_session: Session) -> None:
     repo.mark_published(newer.id, when=now)
     latest = repo.latest_published_at()
     assert latest is not None
-    # Compare instant-in-time; SQLite returns naive UTC, Postgres tz-aware.
-    # (A dedicated UTC column type unifies this in a follow-up change.)
-    latest_naive = latest.replace(tzinfo=None)
-    assert latest_naive == now.replace(tzinfo=None)
+    # UtcDateTime guarantees a tz-aware UTC value on every backend, so a direct
+    # equality against the tz-aware ``now`` holds (no naive/aware mismatch).
+    assert latest.tzinfo is not None
+    assert latest == now
 
 
 def test_post_mark_failed(db_session: Session) -> None:
