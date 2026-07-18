@@ -37,6 +37,10 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "python-dotenv>=1.0",
+    # Phase 2 — Database Layer & Migrations
+    "SQLAlchemy>=2.0",
+    "alembic>=1.13",
+    "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +50,15 @@ dev = [
     "mypy>=1.11",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    # Type stubs for strict mypy (Phase 2)
+    "types-PyYAML>=6.0",
+]
+# Production-only drivers. SQLite (dev/test) needs no extra driver — it ships
+# with CPython. PostgreSQL support is opt-in to keep the base/dev install light:
+#   pip install -e ".[prod]"
+prod = [
+    # Phase 2 — PostgreSQL driver for production DATABASE_URL
+    "psycopg[binary]>=3.1",
 ]
 
 [project.scripts]
