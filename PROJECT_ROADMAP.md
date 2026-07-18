@@ -884,3 +884,292 @@ scripts/run_once.py
 - No graceful shutdown → lost in-flight posts.
 
 **Future improvements:** Task queue backend; parallel per-source workers; backpressure controls.
+
+---
+
+### Phase 12 — Admin Control (Telegram Commands)
+
+**Goal:** Operate the bot safely from Telegram without SSH.
+
+**Description:** An admin-only command handler (restricted to `admin_user_ids`) exposes runtime control: `/status`, `/pause`, `/resume`, `/sources`, `/addsource <url>`, `/disable <id>`, `/setgap <min>`, `/setthreshold <v>`, `/last`, `/health`. Commands mutate `kv_state`/`sources` and never expose secrets.
+
+**Tasks:**
+1. `admin/commands.py` — aiogram router with an admin filter (user-id allowlist).
+2. Implement read commands (`/status`, `/health`, `/last`, `/sources`).
+3. Implement mutating commands (`/pause`, `/resume`, `/setgap`, `/setthreshold`, `/addsource`, `/disable`).
+4. Persist toggles in `kv_state`; publisher/pipeline consult `paused` flag before acting.
+
+**Files:** `admin/commands.py`
+
+**Folder structure (added):**
+```
+src/newsbot/admin/commands.py
+```
+
+**Required libraries:** `aiogram>=3`.
+
+**Database changes:** Reads/writes `kv_state`, `sources`. No schema change.
+
+**APIs:** Telegram Bot API (getUpdates/long-poll or webhook).
+
+**Testing:**
+- Non-admin user → command rejected.
+- `/pause` sets flag; publisher stops; `/resume` restarts.
+- `/addsource` validates URL before inserting.
+
+**Completion checklist:**
+- [ ] Only admins can run commands.
+- [ ] Pause/resume actually gates publishing.
+- [ ] No secret is ever printed.
+
+**Common mistakes:**
+- Command injection via unvalidated args (e.g. source URL) — validate strictly.
+- Forgetting to enforce the admin filter on every handler.
+- Race between `/pause` and an in-flight publish — check flag right before send.
+
+**Future improvements:** Inline buttons/menus; approval workflow (`/approve` before posting); audit log of admin actions.
+
+---
+
+### Phase 13 — Logging, Monitoring & Alerting
+
+**Goal:** Full observability so failures are seen and diagnosed fast.
+
+**Description:** Structured JSON logging via `structlog` with request/correlation IDs per article; lightweight metrics counters (fetched, deduped, scored, published, errors); a health endpoint/heartbeat; and admin alerts to a private chat on repeated failures.
+
+**Tasks:**
+1. `core/logging.py` — configure `structlog` (JSON in prod, pretty in dev); bind `article_id`/`run_id`.
+2. Add metrics counters (in-DB `kv_state` or Prometheus client) for key pipeline events.
+3. Heartbeat: periodic `kv_state.last_heartbeat`; `/health` reports staleness.
+4. Alerting: on N consecutive errors or a crash, DM the admin chat.
+
+**Files:** `core/logging.py`, `config/logging.yaml`
+
+**Folder structure (added):**
+```
+src/newsbot/core/logging.py
+config/logging.yaml
+```
+
+**Required libraries:** `structlog`, (optional) `prometheus-client`.
+
+**Database changes:** Uses `kv_state` for heartbeat/counters. No schema change.
+
+**APIs:** Telegram (admin alerts); optional Prometheus scrape.
+
+**Testing:**
+- Logs are valid JSON with bound fields.
+- Alert fires after threshold of simulated failures.
+- Heartbeat updates on each run.
+
+**Completion checklist:**
+- [ ] Structured logs everywhere (no bare `print`).
+- [ ] Alerts reach admin on failure.
+- [ ] Health reflects real liveness.
+
+**Common mistakes:**
+- Logging secrets/tokens — redact.
+- Noisy logs (log every item at INFO) — use levels.
+- Alert storms — debounce/aggregate alerts.
+
+**Future improvements:** Grafana dashboards; Sentry error tracking; SLO/alerting rules.
+
+---
+
+### Phase 14 — Testing, CI & Quality Gates
+
+**Goal:** Lock in correctness with automated tests and CI gates on every change.
+
+**Description:** Comprehensive `pytest` suite (unit + integration) with mocked external services (`respx` for HTTP, fake LLM/image/Bot clients), coverage ≥ 80% on core logic, and a GitHub Actions pipeline running lint + typecheck + tests + coverage on push/PR.
+
+**Tasks:**
+1. `tests/conftest.py` — fixtures: in-memory DB, fake providers, sample articles.
+2. Unit tests for every processing module; integration test for the full pipeline.
+3. `respx` HTTP mocks; fake LLM/image/Telegram clients.
+4. `.github/workflows/ci.yml` — matrix (py3.11/3.12), `ruff`, `mypy`, `pytest --cov`, coverage gate.
+
+**Files:** `tests/**`, `.github/workflows/ci.yml` (expanded)
+
+**Folder structure (added):**
+```
+tests/{unit,integration,fixtures}/...
+tests/conftest.py
+```
+
+**Required libraries:** `pytest`, `pytest-asyncio`, `pytest-cov`, `respx`, `freezegun`.
+
+**Database changes:** Test-only in-memory DB.
+
+**APIs:** All external APIs mocked in tests.
+
+**Testing:** (this phase *is* testing) — verify the suite runs green locally and in CI.
+
+**Completion checklist:**
+- [ ] Coverage ≥ 80% on `src/newsbot/processing` + `publishing`.
+- [ ] CI green (lint + type + test).
+- [ ] No real network calls in tests.
+
+**Common mistakes:**
+- Flaky tests using real time/network — use `freezegun` + mocks.
+- Testing implementation details vs behavior.
+- Ignoring async warnings — configure `pytest-asyncio` mode.
+
+**Future improvements:** Mutation testing; load/perf tests; contract tests for providers.
+
+---
+
+### Phase 15 — Containerization & Deployment (24/7)
+
+**Goal:** Package the bot to run reliably 24/7 with auto-restart and reproducible config.
+
+**Description:** A slim multi-stage `Dockerfile`, a `docker-compose.yml` bringing up the app + PostgreSQL, restart policies for 24/7 uptime, migration-on-start, and clear deployment docs for a VPS/managed host. Alternatively a systemd/PM2 setup for non-Docker hosts.
+
+**Tasks:**
+1. `Dockerfile` — multi-stage (build deps → slim runtime), non-root user, healthcheck.
+2. `docker-compose.yml` — services: `bot` (all processes or split), `db` (Postgres), volumes, restart `unless-stopped`.
+3. Entrypoint runs `alembic upgrade head` then launches processes.
+4. Deployment doc: env setup, secrets, backups, log rotation.
+
+**Files:** `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `scripts/entrypoint.sh`, `docs/DEPLOYMENT.md`
+
+**Folder structure (added):**
+```
+Dockerfile
+docker-compose.yml
+scripts/entrypoint.sh
+docs/DEPLOYMENT.md
+```
+
+**Required libraries:** (system) Docker, Docker Compose.
+
+**Database changes:** Migrations applied automatically on container start.
+
+**APIs:** None new.
+
+**Testing:**
+- `docker compose up` boots app + db; migrations apply.
+- Kill the bot container → auto-restarts.
+- Smoke: bot posts to a test channel from the container.
+
+**Completion checklist:**
+- [ ] Container runs as non-root with healthcheck.
+- [ ] Auto-restart verified.
+- [ ] Migrations run on start; data persists across restarts.
+
+**Common mistakes:**
+- Baking secrets into the image — pass via env/secret files.
+- No restart policy → not truly 24/7.
+- Losing DB data (no volume) on recreate.
+
+**Future improvements:** Kubernetes/Helm; horizontal scaling of pipeline workers; managed Postgres + backups.
+
+---
+
+### Phase 16 — Hardening, Security & v1.0 Release
+
+**Goal:** Ship a secure, documented, tagged **v1.0**.
+
+**Description:** Final security review (secrets, input validation, dependency audit), rate/cost caps for AI, backup/restore procedure, complete docs, and a tagged GitHub release with changelog.
+
+**Tasks:**
+1. Security pass: secret scanning, `pip-audit`, least-privilege token check, input sanitization review.
+2. Cost controls: per-day AI spend cap, max posts/day safety valve.
+3. Backup/restore doc + script for the database and `media/`.
+4. Finalize `README.md`, `docs/`, `CHANGELOG.md`; tag `v1.0.0` and cut a GitHub Release.
+
+**Files:** `CHANGELOG.md`, `docs/SECURITY.md`, `scripts/backup.sh`, finalized `README.md`
+
+**Folder structure (added):**
+```
+CHANGELOG.md
+docs/SECURITY.md
+scripts/backup.sh
+```
+
+**Required libraries:** `pip-audit`, `detect-secrets` (dev/CI).
+
+**Database changes:** None (freeze schema for v1.0).
+
+**APIs:** None new.
+
+**Testing:**
+- Full end-to-end dry run on staging channel.
+- Restore from backup succeeds.
+- Secret scan is clean.
+
+**Completion checklist:**
+- [ ] `pip-audit` + secret scan clean.
+- [ ] Backup/restore verified.
+- [ ] `v1.0.0` tagged + Release published.
+
+**Common mistakes:**
+- Shipping with debug logging of payloads (may leak).
+- No spend cap → surprise AI bill.
+- Untested restore = no real backup.
+
+**Future improvements:** SBOM, signed releases, automated dependency updates (Dependabot/Renovate).
+
+---
+
+## 10. Cross-Cutting Concerns
+
+- **Idempotency everywhere:** hashes + status transitions prevent duplicate work/posts.
+- **UTC only:** store and compute all times in UTC; format to local only at display.
+- **Provider abstraction:** LLM/image/DB behind interfaces; swap without touching business logic.
+- **Config-driven behavior:** thresholds, gaps, sources, prompts in config, not code.
+- **Graceful degradation:** if AI is down, articles wait (not lost); if image fails, post text-only (policy-configurable).
+- **Backpressure & cost caps:** per-run and per-day limits on external calls.
+
+## 11. Global Testing Strategy
+
+| Layer | Tooling | What it proves |
+|------|---------|----------------|
+| Unit | pytest | Each function's logic in isolation. |
+| Integration | pytest + in-memory DB | Stages work together, DB effects correct. |
+| Contract | respx / fakes | External providers called correctly. |
+| E2E (staging) | test channel | Real post appears, spacing respected. |
+| Regression | golden files | Extraction/rewrite output stays stable. |
+| CI gate | GitHub Actions | Lint + type + test + coverage on every push. |
+
+## 12. Security Checklist
+
+- [ ] Secrets only via env/secret store; `.env` git-ignored; only `.env.example` committed.
+- [ ] Tokens least-privilege (bot only in its channel).
+- [ ] Admin commands restricted to allowlisted user IDs.
+- [ ] All external inputs (feeds, LLM output, admin args) validated/sanitized.
+- [ ] No secrets/PII in logs.
+- [ ] Dependency audit (`pip-audit`) in CI.
+- [ ] Rate/cost caps on AI + Telegram.
+- [ ] Backups encrypted at rest; restore tested.
+
+## 13. Release Plan & Versioning
+
+- **SemVer** `MAJOR.MINOR.PATCH`.
+- **Milestones:** `v0.1` (Phases 0–5, pipeline foundation), `v0.5` (Phases 6–11, full AI pipeline + publishing), `v0.9` (Phases 12–15, ops-ready), `v1.0` (Phase 16, hardened release).
+- **Branching:** trunk-based on `main`; short-lived feature branches; conventional commits.
+- **Checkpoint rule:** every meaningful change is committed and pushed immediately (recovery checkpoints).
+
+## 14. Post-v1.0 Future Roadmap
+
+- Multi-channel & multi-language publishing.
+- Vector DB story clustering + "update existing post" on developing stories.
+- Editorial approval workflow (human-in-the-loop) via inline buttons.
+- Web admin dashboard + analytics (engagement per post).
+- Distributed task queue (Celery/RQ) + autoscaling workers.
+- Fine-tuned importance classifier to cut LLM cost.
+- Source reputation/trust learning loop.
+- A/B testing of headlines and posting times.
+
+## 15. Glossary
+
+- **Breaking news:** time-sensitive story flagged for priority handling.
+- **Dedup (exact/near/semantic):** layers preventing duplicate posts.
+- **Importance score:** AI-assigned 0–1 relevance/impact rating.
+- **Min-gap:** minimum time between consecutive posts (default 20 min).
+- **Post queue:** durable list of scheduled, ready-to-publish posts.
+- **Idempotent:** repeating an operation produces no additional effect.
+- **Provider abstraction:** interface allowing swappable LLM/image/DB backends.
+
+---
+
+> **End of roadmap.** Each phase can now be implemented independently, in order, each ending in a working, tested, committed increment — culminating in a secure, scalable, production-ready **v1.0**.
