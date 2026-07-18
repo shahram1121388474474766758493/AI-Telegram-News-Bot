@@ -25,4 +25,7 @@
 # dev extras instead:  pip install -e ".[dev]"
 # ==========================================================
 
-# (no runtime dependencies yet — Phase 0 stub)
+# ---- Phase 1 — Configuration & Secrets ----
+pydantic>=2.7
+pydantic-settings>=2.3
+python-dotenv>=1.0
