@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -33,11 +34,13 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    TypeDecorator,
     UniqueConstraint,
 )
 from sqlalchemy import (
     Enum as SAEnum,
 )
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 __all__ = [
@@ -51,6 +54,7 @@ __all__ = [
     "PostStatus",
     "Source",
     "SourceType",
+    "UtcDateTime",
     "utcnow",
 ]
 
@@ -62,6 +66,49 @@ def utcnow() -> datetime:
     is identical on SQLite and PostgreSQL (both store what we hand them).
     """
     return datetime.now(UTC)
+
+
+class UtcDateTime(TypeDecorator[datetime]):
+    """A timezone-aware ``DateTime`` that always reads/writes UTC.
+
+    SQLite has no native timezone type, so a value written as tz-aware comes
+    back **naive** — which then compares unequal to the tz-aware value that was
+    stored, and silently invites local-time scheduling bugs (a mistake the
+    roadmap explicitly warns against). This decorator normalizes both
+    directions so *every* backend behaves like PostgreSQL:
+
+    * **On bind (write):** naive datetimes are assumed UTC; aware datetimes are
+      converted to UTC. The stored value is therefore unambiguously UTC.
+    * **On result (read):** naive values (from SQLite) are re-stamped as UTC;
+      aware values (from PostgreSQL) are converted to UTC.
+
+    The net effect: callers always get back a timezone-aware UTC ``datetime``,
+    identical across dev (SQLite) and prod (PostgreSQL).
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_literal_param(self, value: Any, dialect: Dialect) -> str:  # pragma: no cover
+        return str(value)
+
+    @property
+    def python_type(self) -> type[datetime]:  # pragma: no cover - trivial
+        return datetime
 
 
 class SourceType(StrEnum):
@@ -111,10 +158,8 @@ class Source(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Relative influence when several sources cover the same story (>= 0).
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
-    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow
-    )
+    last_polled_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
 
     articles: Mapped[list[Article]] = relationship(
         back_populates="source",
@@ -143,7 +188,7 @@ class Article(Base):
     url_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     body: Mapped[str | None] = mapped_column(Text, default=None)
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    published_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
     image_url: Mapped[str | None] = mapped_column(String(2000), default=None)
     # Hash of the normalized body — near-duplicate detection.
     content_hash: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
@@ -155,9 +200,7 @@ class Article(Base):
         default=ArticleStatus.FETCHED,
         index=True,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
 
     source: Mapped[Source] = relationship(back_populates="articles")
     decisions: Mapped[list[Decision]] = relationship(
@@ -188,9 +231,7 @@ class Decision(Base):
     reason: Mapped[str | None] = mapped_column(Text, default=None)
     model: Mapped[str | None] = mapped_column(String(120), default=None)
     prompt_version: Mapped[str | None] = mapped_column(String(40), default=None)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
 
     article: Mapped[Article] = relationship(back_populates="decisions")
 
@@ -219,14 +260,10 @@ class Post(Base):
         index=True,
     )
     # When the post becomes eligible to publish (min-gap scheduling, Phase 10).
-    scheduled_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None, index=True
-    )
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    scheduled_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None, index=True)
+    published_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
     telegram_message_id: Mapped[int | None] = mapped_column(Integer, default=None)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
 
     article: Mapped[Article] = relationship(back_populates="posts")
     logs: Mapped[list[PostLog]] = relationship(
@@ -250,9 +287,7 @@ class PostLog(Base):
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     result: Mapped[str] = mapped_column(String(40), nullable=False)
     error: Mapped[str | None] = mapped_column(Text, default=None)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False, default=utcnow)
 
     post: Mapped[Post] = relationship(back_populates="logs")
 
@@ -268,7 +303,7 @@ class KVState(Base):
     key: Mapped[str] = mapped_column(String(120), primary_key=True)
     value: Mapped[str | None] = mapped_column(Text, default=None)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+        UtcDateTime, nullable=False, default=utcnow, onupdate=utcnow
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debug convenience
