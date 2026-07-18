@@ -1,0 +1,90 @@
+# ==========================================================
+# AI-Telegram-News-Bot — .dockerignore
+# ----------------------------------------------------------
+# Keep the Docker build context small and secret-free. Only
+# what the image actually needs is copied in; everything
+# below is excluded from the build context.
+# ==========================================================
+
+# ---- Version control & CI ----
+.git
+.gitignore
+.github/
+
+# ---- Secrets / environment (NEVER ship into an image) ----
+.env
+.env.*
+!.env.example
+.dev.vars
+*.pem
+*.key
+credentials.json
+service_account.json
+
+# ---- Python caches & build artifacts ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.tox/
+
+# ---- Virtual environments ----
+env/
+venv/
+.venv/
+ENV/
+
+# ---- Local databases ----
+*.sqlite
+*.sqlite3
+*.db
+data/*.db
+data/*.sqlite3
+
+# ---- Logs / runtime state ----
+logs/
+*.log
+pids/
+*.pid
+
+# ---- Caches / temp ----
+.cache/
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# ---- Generated / downloaded media ----
+media/generated/
+media/downloads/
+*.tar.gz
+*.zip
+
+# ---- Docs & project meta not needed at runtime ----
+PROJECT_ROADMAP.md
+docs/
+tests/
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ---- Docker (avoid recursive context) ----
+Dockerfile
+docker-compose.yml
+docker-compose.override.yml
+.dockerignore
