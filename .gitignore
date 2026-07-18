@@ -1,0 +1,81 @@
+# ==========================================================
+# AI-Telegram-News-Bot — .gitignore
+# ==========================================================
+
+# ---- Secrets / Environment ----
+.env
+.env.*
+!.env.example
+.dev.vars
+*.pem
+*.key
+credentials.json
+service_account.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.tox/
+
+# ---- Node (optional tooling / dashboard) ----
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+.pnpm-debug.log*
+
+# ---- Databases ----
+*.sqlite
+*.sqlite3
+*.db
+data/*.db
+data/*.sqlite3
+
+# ---- Logs ----
+logs/
+*.log
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# ---- Caches / Temp ----
+.cache/
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# ---- Media (generated/downloaded assets) ----
+media/generated/
+media/downloads/
+*.tar.gz
+*.zip
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ---- Docker ----
+docker-compose.override.yml
