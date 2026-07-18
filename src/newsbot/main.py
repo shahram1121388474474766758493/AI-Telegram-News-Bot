@@ -18,8 +18,9 @@ Design choices:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from newsbot import __version__
 
@@ -32,6 +33,11 @@ COMMANDS: dict[str, str] = {
     "publisher": "Drain the post queue and publish to Telegram, respecting the min-gap.",
     "admin": "Long-poll Telegram for admin commands (/status, /pause, ...).",
     "all": "Launch every process together (pipeline + publisher + admin + scheduler).",
+}
+
+# Utility commands available from Phase 1 onward (not long-running processes).
+UTILITY_COMMANDS: dict[str, str] = {
+    "config": "Validate configuration and print it with all secrets masked.",
 }
 
 
@@ -49,15 +55,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the program version and exit.",
     )
 
+    all_commands = {**UTILITY_COMMANDS, **COMMANDS}
     subparsers = parser.add_subparsers(
         dest="command",
-        metavar="{" + ",".join(COMMANDS) + "}",
-        help="Process to run.",
+        metavar="{" + ",".join(all_commands) + "}",
+        help="Command to run.",
     )
-    for name, description in COMMANDS.items():
+    for name, description in all_commands.items():
         subparsers.add_parser(name, help=description, description=description)
 
     return parser
+
+
+def _run_config() -> int:
+    """Validate configuration and print a secret-masked summary as JSON.
+
+    This is the first real use of the Phase 1 settings layer: constructing
+    :class:`~newsbot.settings.Settings` triggers full validation (raising a
+    clear error on misconfiguration), and ``redacted_summary()`` guarantees no
+    credential is ever printed.
+    """
+    from newsbot.settings import get_settings
+
+    try:
+        settings = get_settings()
+    except Exception as exc:
+        print(f"[{PROGRAM_NAME}] configuration error: {exc}", file=sys.stderr)
+        return 2
+
+    print(json.dumps(settings.redacted_summary(), indent=2, sort_keys=True))
+    return 0
+
+
+# Maps a utility command name to its zero-argument handler. Long-running
+# process commands (COMMANDS) are dispatched separately via ``_run_command``.
+UTILITY_HANDLERS: dict[str, Callable[[], int]] = {
+    "config": _run_config,
+}
 
 
 def _run_command(command: str) -> int:
@@ -91,6 +125,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # No subcommand given: show help and signal misuse.
         parser.print_help()
         return 1
+
+    handler = UTILITY_HANDLERS.get(args.command)
+    if handler is not None:
+        return handler()
 
     return _run_command(args.command)
 
