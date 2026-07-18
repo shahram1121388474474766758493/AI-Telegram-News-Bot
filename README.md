@@ -166,6 +166,9 @@ cp .env.example .env      # fill in tokens & settings
 # 3. Install
 pip install -e ".[dev]"   # (added in Phase 0)
 
+# 3b. Verify configuration (validates env; prints a secret-masked summary)
+python -m newsbot config  # (added in Phase 1)
+
 # 4. Migrate DB
 alembic upgrade head      # (added in Phase 2)
 
@@ -211,7 +214,8 @@ Full checklist: [roadmap §12](./PROJECT_ROADMAP.md#12-security-checklist).
 
 - ✅ **Done:** Complete architecture, technology decisions, data model, and the full 17-phase implementation roadmap.
 - ✅ **Phase 0 — Bootstrap & Tooling:** `pyproject.toml`, `requirements.txt`, the importable `newsbot` package with a stub CLI (`newsbot {pipeline,publisher,admin,all}`), `Makefile` quality-gate targets, `.dockerignore`, a passing smoke-test suite, and a GitHub Actions CI workflow (in [`ci/ci.yml`](./ci/ci.yml) — see its header to activate under `.github/workflows/`). All gates green: `ruff`, `black`, `mypy --strict`, `pytest`.
-- 🔜 **Next:** **Phase 1 (Configuration & Secrets)** → **Phase 2 (Database)**, committing each increment.
+- ✅ **Phase 1 — Configuration & Secrets:** validated, environment-driven [`src/newsbot/settings.py`](./src/newsbot/settings.py) (`pydantic-settings`) covering every runtime knob — with `SecretStr` secrets, `Environment`/`LogLevel` enums, production-strict validation (real secrets required when `ENVIRONMENT=production`), and typed derived accessors (`admin_ids`, `min_post_gap`/`poll_interval` as `timedelta`). Exposed via a cached `get_settings()` and a new `newsbot config` command that validates and prints a **secret-masked** summary. Fully unit-tested (loading, parsing, range/validation, masking, caching, CLI).
+- 🔜 **Next:** **Phase 2 (Database Layer & Migrations)** — SQLAlchemy 2.x ORM models + Alembic, committing each increment.
 
 Not yet implemented: application features (built out phase by phase per the roadmap).
 
