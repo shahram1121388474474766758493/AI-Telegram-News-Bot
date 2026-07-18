@@ -210,9 +210,10 @@ Full checklist: [roadmap §12](./PROJECT_ROADMAP.md#12-security-checklist).
 ## 🧩 Current Status & Next Steps
 
 - ✅ **Done:** Complete architecture, technology decisions, data model, and the full 17-phase implementation roadmap.
-- 🔜 **Next:** Implement **Phase 0 (Bootstrap & Tooling)** → **Phase 1 (Config)** → **Phase 2 (Database)**, committing each increment.
+- ✅ **Phase 0 — Bootstrap & Tooling:** `pyproject.toml`, `requirements.txt`, the importable `newsbot` package with a stub CLI (`newsbot {pipeline,publisher,admin,all}`), `Makefile` quality-gate targets, `.dockerignore`, a passing smoke-test suite, and a GitHub Actions CI workflow (in [`ci/ci.yml`](./ci/ci.yml) — see its header to activate under `.github/workflows/`). All gates green: `ruff`, `black`, `mypy --strict`, `pytest`.
+- 🔜 **Next:** **Phase 1 (Configuration & Secrets)** → **Phase 2 (Database)**, committing each increment.
 
-Not yet implemented: application code (built out phase by phase per the roadmap).
+Not yet implemented: application features (built out phase by phase per the roadmap).
 
 ---
 
