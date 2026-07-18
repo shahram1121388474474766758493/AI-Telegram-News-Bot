@@ -331,3 +331,283 @@ Core entities (fully specified in Phase 2). Field types shown conceptually.
 | 16 | Hardening & v1.0 | security, release |
 
 Each phase below follows the same template: **Goal · Description · Tasks · Files · Folder structure · Required libraries · Database changes · APIs · Testing · Completion checklist · Common mistakes · Future improvements.**
+
+---
+
+## 9. Detailed Phases
+
+---
+
+### Phase 0 — Project Bootstrap & Tooling
+
+**Goal:** Establish a professional, reproducible Python project skeleton with quality gates before any feature code exists.
+
+**Description:** Create the package layout, dependency manifests, formatting/linting/typing tooling, a `Makefile` for common tasks, and a minimal CI workflow. This guarantees every later phase is written under consistent standards and is CI-verified from day one.
+
+**Tasks:**
+1. Create `pyproject.toml` (project metadata, tool config for ruff/black/mypy/pytest).
+2. Create `requirements.txt` (runtime) and dev extras.
+3. Create the `src/newsbot/` package with `__init__.py` and a stub `main.py`.
+4. Add `Makefile` targets: `install`, `lint`, `format`, `typecheck`, `test`, `run`.
+5. Add `.dockerignore`, `LICENSE` (MIT).
+6. Add `.github/workflows/ci.yml` running lint + typecheck + tests on push/PR.
+7. Configure `ruff`, `black`, `mypy` strict mode for `src/`.
+
+**Files:**
+- `pyproject.toml`, `requirements.txt`, `Makefile`, `.dockerignore`, `LICENSE`
+- `src/newsbot/__init__.py`, `src/newsbot/main.py`
+- `.github/workflows/ci.yml`
+
+**Folder structure (added this phase):**
+```
+src/newsbot/__init__.py
+src/newsbot/main.py
+.github/workflows/ci.yml
+```
+
+**Required libraries:** `ruff`, `black`, `mypy`, `pytest`, `pytest-asyncio` (dev). No runtime deps yet beyond stubs.
+
+**Database changes:** None.
+
+**APIs:** None.
+
+**Testing:**
+- `tests/unit/test_smoke.py` importing the package and asserting version string.
+- CI must pass green on first push.
+
+**Completion checklist:**
+- [ ] `make lint`, `make typecheck`, `make test` all pass locally.
+- [ ] CI green on GitHub.
+- [ ] Package importable: `python -c "import newsbot"`.
+
+**Common mistakes:**
+- Forgetting `src/` layout on `PYTHONPATH` → use `pyproject.toml` `[tool.setuptools]` / editable install.
+- Over-pinning deps too early; pin loosely, lock later.
+- Enabling mypy strict on tests folder and drowning in noise → scope mypy to `src/`.
+
+**Future improvements:** Pre-commit hooks; `uv` lockfile; coverage badge.
+
+---
+
+### Phase 1 — Configuration & Secrets Management
+
+**Goal:** A single, validated, environment-driven configuration object; no secret ever committed.
+
+**Description:** Use `pydantic-settings` to load all runtime configuration from environment variables (and `.env` in dev). Provide `.env.example` documenting every variable. Configuration includes tokens, database URL, thresholds, and the min-post-gap.
+
+**Tasks:**
+1. Implement `src/newsbot/settings.py` with a `Settings` class.
+2. Define fields: `telegram_bot_token`, `telegram_channel_id`, `admin_user_ids`, `database_url`, `llm_api_key`, `llm_base_url`, `llm_model`, `image_api_key`, `min_post_gap_minutes` (default 20), `importance_threshold` (default 0.6), `poll_interval_minutes`, `log_level`, `environment`.
+3. Add validators (e.g. token non-empty in prod, threshold in [0,1]).
+4. Create `.env.example` with placeholders + comments.
+5. Provide a cached `get_settings()` accessor.
+
+**Files:** `src/newsbot/settings.py`, `.env.example`
+
+**Folder structure:** (no new dirs)
+
+**Required libraries:** `pydantic`, `pydantic-settings`, `python-dotenv`.
+
+**Database changes:** None (defines `database_url`).
+
+**APIs:** None.
+
+**Testing:**
+- Unit test loading from a monkeypatched env.
+- Test validation failures raise clearly.
+
+**Completion checklist:**
+- [ ] `get_settings()` returns a validated object.
+- [ ] Missing required var in `production` raises a helpful error.
+- [ ] `.env.example` documents every field; real `.env` git-ignored.
+
+**Common mistakes:**
+- Reading `os.environ` directly elsewhere in code (bypasses validation) — always go through `Settings`.
+- Committing a real `.env`.
+- Not caching settings → repeated env parsing.
+
+**Future improvements:** Secret managers (Vault/Doppler); per-channel config; hot reload.
+
+---
+
+### Phase 2 — Database Layer & Migrations
+
+**Goal:** A durable, migratable persistence layer that works on SQLite (dev) and PostgreSQL (prod) unchanged.
+
+**Description:** Define SQLAlchemy 2.x ORM models for all entities in §6, wire an engine/session factory, add a thin repository layer for data access, and initialize Alembic for versioned migrations.
+
+**Tasks:**
+1. `db/engine.py` — build engine from `database_url`, session factory, healthcheck.
+2. `db/models.py` — ORM: `Source`, `Article`, `Decision`, `Post`, `PostLog`, `KVState`.
+3. `db/repositories.py` — CRUD + queries (`get_article_by_url_hash`, `enqueue_post`, `next_publishable_post`, `record_decision`, ...).
+4. `alembic.ini` + `db/migrations/` — initial migration creating all tables + indexes (`url_hash` unique, `content_hash`, `posts.status`, `scheduled_at`).
+5. `scripts/seed_sources.py` — load `config/sources.yaml` into `sources`.
+
+**Files:** `db/engine.py`, `db/models.py`, `db/repositories.py`, `alembic.ini`, `db/migrations/*`, `scripts/seed_sources.py`
+
+**Folder structure (added):**
+```
+src/newsbot/db/{engine.py,models.py,repositories.py,migrations/}
+alembic.ini
+scripts/seed_sources.py
+```
+
+**Required libraries:** `SQLAlchemy>=2`, `alembic`, `psycopg[binary]` (prod), `aiosqlite`/`sqlite` (dev), `PyYAML`.
+
+**Database changes:** **Initial schema** — creates `sources, articles, decisions, posts, post_log, kv_state` with indexes and FKs listed in §6.
+
+**APIs:** None.
+
+**Testing:**
+- Spin up in-memory SQLite; run migrations; insert+query each model.
+- Uniqueness constraint on `url_hash` enforced.
+- Repository idempotency: inserting same `url_hash` twice is a no-op/handled.
+
+**Completion checklist:**
+- [ ] `alembic upgrade head` builds full schema on SQLite and Postgres.
+- [ ] Repositories covered by unit tests.
+- [ ] Seed script populates sources.
+
+**Common mistakes:**
+- SQLite/Postgres type mismatches (e.g. `JSONB` vs `JSON`) — use SQLAlchemy generic types.
+- Forgetting indexes on hash columns → slow dedup lookups.
+- Sessions leaking (no `with` / context manager) → connection exhaustion.
+
+**Future improvements:** Read replicas; partitioning `articles` by date; connection pooling tuning.
+
+---
+
+### Phase 3 — Source Registry & Feed Fetcher
+
+**Goal:** Reliably pull raw items from every enabled trusted source on a schedule.
+
+**Description:** Load the source registry from `config/sources.yaml`, and implement fetchers for RSS/Atom, generic HTML index pages, and JSON APIs. Fetching is async, timeout-bounded, retried with backoff, and polite (respects `robots`, adds `User-Agent`, throttles per host).
+
+**Tasks:**
+1. `sources/registry.py` — parse+validate `sources.yaml` into `Source` models.
+2. `sources/fetcher.py` — async `httpx` client; `fetch_rss`, `fetch_html_index`, `fetch_api`.
+3. Per-source `last_polled_at` update; conditional GET (ETag/Last-Modified) to save bandwidth.
+4. `config/sources.yaml` — seed with reputable gaming outlets' public RSS feeds.
+5. Emit raw items (url, title, summary, published_at, raw_html) to the next stage.
+
+**Files:** `sources/registry.py`, `sources/fetcher.py`, `config/sources.yaml`
+
+**Folder structure (added):**
+```
+src/newsbot/sources/{registry.py,fetcher.py}
+config/sources.yaml
+```
+
+**Required libraries:** `httpx`, `feedparser`, `PyYAML`, `tenacity`.
+
+**Database changes:** Uses `sources` (read + update `last_polled_at`). No schema change.
+
+**APIs:** Outbound HTTP to source feeds; optional third-party news APIs.
+
+**Testing:**
+- `respx`-mock RSS/HTML/API responses; assert parsed items.
+- Timeout + retry behavior tested with simulated failures.
+- Conditional GET returns 304 → no reprocessing.
+
+**Completion checklist:**
+- [ ] All enabled sources fetch without unhandled errors.
+- [ ] Retries/backoff verified.
+- [ ] `last_polled_at` updated per source.
+
+**Common mistakes:**
+- Ignoring `robots.txt`/ToS → legal/ethical risk.
+- No timeout → hung workers.
+- Assuming every feed has `published` date — handle missing fields.
+- Hammering a host (no throttle) → IP bans.
+
+**Future improvements:** Playwright for JS-heavy sites; per-source parsers; adaptive polling by source velocity.
+
+---
+
+### Phase 4 — Article Extraction & Normalization
+
+**Goal:** Turn messy raw items into clean, uniform `Article` objects ready for AI.
+
+**Description:** Extract the main article text (stripping nav/ads/boilerplate), normalize whitespace/encoding, detect language, extract a lead image, compute `url_hash` and `content_hash`/`simhash`, and persist as `articles` with status `fetched`.
+
+**Tasks:**
+1. `sources/extractor.py` — use `trafilatura` (fallback `BeautifulSoup`) for main content.
+2. Normalize: unicode NFKC, collapse whitespace, strip tracking params from URLs.
+3. Extract lead image (`og:image` / first content image).
+4. Compute hashes: `url_hash = sha256(canonical_url)`, `content_hash = sha256(normalized_title+body)`, `simhash` for near-dup.
+5. Map to `core/models.Article` (pydantic) and persist via repository (idempotent on `url_hash`).
+
+**Files:** `sources/extractor.py`, `core/models.py` (define `Article`)
+
+**Folder structure (added):**
+```
+src/newsbot/core/models.py
+src/newsbot/sources/extractor.py
+```
+
+**Required libraries:** `trafilatura`, `beautifulsoup4`, `selectolax`, `langdetect`/`fasttext`, `w3lib` (URL canonicalization).
+
+**Database changes:** Writes `articles` (status=`fetched`). No schema change (table from Phase 2).
+
+**APIs:** None (may re-fetch full HTML if summary-only).
+
+**Testing:**
+- Golden-file tests: sample HTML → expected clean text.
+- URL canonicalization strips `utm_*`.
+- Hash stability across runs.
+
+**Completion checklist:**
+- [ ] Clean body extracted for sample pages.
+- [ ] Duplicate URL not inserted twice.
+- [ ] Language detected and stored.
+
+**Common mistakes:**
+- Extractor returning nav/footer noise — validate with goldens.
+- Non-deterministic hashes (unstable ordering/whitespace) — normalize first.
+- Losing the source's own image before Phase 8.
+
+**Future improvements:** Readability fallbacks; boilerplate ML model; per-domain extraction rules.
+
+---
+
+### Phase 5 — Deduplication Engine
+
+**Goal:** Guarantee the same story is never posted twice — even when reported by multiple outlets.
+
+**Description:** A layered dedup: (1) **exact** by `url_hash`/`content_hash`; (2) **near-duplicate** by SimHash Hamming distance + `rapidfuzz` title similarity; (3) **optional semantic** by embedding cosine similarity for cross-source paraphrases. Duplicates are marked and skipped, with the decision recorded.
+
+**Tasks:**
+1. `processing/dedup.py` — `is_exact_duplicate`, `is_near_duplicate`, `is_semantic_duplicate`.
+2. Query recent `articles`/`posts` within a time window for candidate comparison.
+3. Thresholds configurable (Hamming ≤ N, fuzz ratio ≥ M, cosine ≥ C).
+4. Record outcome in `decisions` (`is_duplicate`, `reason`); set article status `deduped`/`rejected`.
+
+**Files:** `processing/dedup.py`
+
+**Folder structure (added):**
+```
+src/newsbot/processing/dedup.py
+```
+
+**Required libraries:** `rapidfuzz`, `simhash`/custom, (optional) `numpy` + embeddings via `ai/client`.
+
+**Database changes:** Writes `decisions`; updates `articles.status`. No schema change.
+
+**APIs:** Optional embeddings endpoint (via AI client).
+
+**Testing:**
+- Identical article → exact duplicate.
+- Same story, different outlet/wording → near/semantic duplicate.
+- Unrelated articles → not duplicate.
+
+**Completion checklist:**
+- [ ] Exact dedup 100% reliable.
+- [ ] Near-dup thresholds tuned on sample set.
+- [ ] Decisions persisted with reason.
+
+**Common mistakes:**
+- Comparing against entire history (slow) — use a rolling time window + indexes.
+- Over-aggressive semantic threshold → drops legitimately distinct news.
+- Not handling updated/republished articles (same story, new info).
+
+**Future improvements:** Vector DB (pgvector/Qdrant); clustering of stories; "update this post" instead of new post.
