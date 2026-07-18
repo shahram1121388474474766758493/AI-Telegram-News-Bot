@@ -220,6 +220,40 @@ class Settings(BaseSettings):
         _parse_admin_ids(value)
         return value
 
+    def redacted_summary(self) -> dict[str, object]:
+        """Return a JSON-friendly view of the config with secrets masked.
+
+        Safe to log or print: every :class:`~pydantic.SecretStr` field is
+        replaced with ``"***set***"`` (when non-empty) or ``"***unset***"``,
+        so no credential is ever exposed. Derived, human-readable values
+        (parsed admin ids, gap/interval as minutes) are included for quick
+        operator inspection.
+        """
+
+        def _mask(secret: SecretStr) -> str:
+            return "***set***" if secret.get_secret_value() else "***unset***"
+
+        return {
+            "environment": self.environment.value,
+            "log_level": self.log_level.value,
+            "telegram_bot_token": _mask(self.telegram_bot_token),
+            "telegram_channel_id": self.telegram_channel_id or "***unset***",
+            "admin_user_ids": list(self.admin_ids),
+            "database_url": self.database_url,
+            "llm_api_key": _mask(self.llm_api_key),
+            "llm_base_url": self.llm_base_url,
+            "llm_model": self.llm_model,
+            "image_api_key": _mask(self.image_api_key),
+            "image_base_url": self.image_base_url or "***unset***",
+            "min_post_gap_minutes": self.min_post_gap_minutes,
+            "importance_threshold": self.importance_threshold,
+            "poll_interval_minutes": self.poll_interval_minutes,
+            "max_posts_per_day": self.max_posts_per_day,
+            "max_ai_spend_per_day": self.max_ai_spend_per_day,
+            "dedup_simhash_max_distance": self.dedup_simhash_max_distance,
+            "dedup_title_fuzz_min": self.dedup_title_fuzz_min,
+        }
+
     @model_validator(mode="after")
     def _enforce_production_requirements(self) -> Settings:
         """In production, required secrets must be real (non-placeholder)."""
